@@ -1,15 +1,1 @@
-[2026-04-15 16:25:17] Deposito en cuenta 1006: +1600.00 EUR (PID: 7555, Estado: OK)
-[2026-04-15 16:25:49] Retiro en cuenta 1006: -4000.00 EUR (PID: 7555, Estado: FALLIDO)
-[2026-04-15 16:26:02] Retiro en cuenta 1006: -1000.00 EUR (PID: 7555, Estado: OK)
-[2026-04-15 16:33:17] Deposito en cuenta 1006: +1700.00 USD (PID: 8465, Estado: OK)
-[2026-04-15 16:33:30] Retiro en cuenta 1006: -300.00 USD (PID: 8465, Estado: OK)
-[2026-04-15 16:33:45] Deposito en cuenta 1006: +3007.00 GBP (PID: 8465, Estado: OK)
-[2026-04-15 16:33:56] Retiro en cuenta 1006: -123.00 GBP (PID: 8465, Estado: OK)
-[2026-04-15 16:35:10] Mover divisa en cuenta 1006: -200.00 EUR (PID: 8465, Estado: OK)
-[2026-04-15 16:56:48] Retiro en cuenta 1006: -1000.00 EUR (PID: 13206, Estado: OK)
-[2026-04-15 16:56:57] Deposito en cuenta 1006: +10000.00 EUR (PID: 13206, Estado: OK)
-[2026-04-15 16:57:02] Retiro en cuenta 1006: -100000.00 EUR (PID: 13206, Estado: FALLIDO)
-[2026-04-15 16:57:21] Retiro en cuenta 1006: -1000.00 EUR (PID: 13206, Estado: OK)
-[2026-04-15 16:57:26] Retiro en cuenta 1006: -1000.00 EUR (PID: 13206, Estado: OK)
-[2026-04-15 16:57:30] Retiro en cuenta 1006: -1000.00 EUR (PID: 13206, Estado: OK)
-[2026-04-15 16:57:30] ALERTA: RETIROS_EXCESIVOS - cuenta BLOQUEADA
+

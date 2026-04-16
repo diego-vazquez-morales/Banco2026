@@ -389,7 +389,7 @@ static void *thread_transferencia(void *arg) {
     if (d->cantidad > saldo_actual) {
         printf("Saldo insuficiente para la transferencia. Saldo actual: %.2f\n", saldo_actual);
         enviar_log(OP_TRANSFERENCIA, d->cantidad, d->divisa_origen, 0);
-        sem_post(sem);
+        sem_post(sem); //liberamos el semaforo(+1)
         sem_close(sem);
         free(d);
         return NULL;
@@ -399,7 +399,7 @@ static void *thread_transferencia(void *arg) {
     if (d->cantidad > limite) {
         printf("Cantidad supera el límite permitido de transferencia: %.2f\n", limite);
         enviar_log(OP_TRANSFERENCIA, d->cantidad, d->divisa_origen, 0);
-        sem_post(sem);
+        sem_post(sem); //liberamos el semaforo(+1)
         sem_close(sem);
         free(d);
         return NULL;

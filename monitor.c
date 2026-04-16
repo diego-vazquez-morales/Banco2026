@@ -17,36 +17,39 @@ static void leer_config_monitor(void) {
    //
    //
     FILE *f = fopen("config.txt", "r");
-if (!f) return;
+    if (!f) return;
 
-char linea[256];
+    //Preparar el buffer
+    char linea[256];
 
-while (fgets(linea, sizeof(linea), f)) {
-    char clave[64], valor[64];
-    if (sscanf(linea, "%63[^=]=%63s", clave, valor) != 2) continue;
+    while (fgets(linea, sizeof(linea), f)) {
+        char clave[64], valor[64];
+        if (sscanf(linea, "%63[^=]=%63s", clave, valor) != 2) continue; //lee hasta encintrar un =
 
-    if (strcmp(clave, "UMBRAL_RETIROS") == 0)
-        g_umbral_retiros = atoi(valor);
-    else if (strcmp(clave, "UMBRAL_TRANSFERENCIAS") == 0)
-        g_umbral_transferencias = atoi(valor);
-}
+        if (strcmp(clave, "UMBRAL_RETIROS") == 0) // compara clave == umbral_retiros(iguales)
+            g_umbral_retiros = atoi(valor);
+        else if (strcmp(clave, "UMBRAL_TRANSFERENCIAS") == 0)
+            g_umbral_transferencias = atoi(valor);
+    }
 
-fclose(f);
-   //
-   //
-   //
+    fclose(f);
+    //
+    //
+    //
 }
 
 /*  Enviar alerta al padre  */
-static void enviar_alerta(int cuenta_id, const char *tipo_alerta) {
+static void enviar_alerta(int cuenta_id, const char *tipo_alerta) { //alerta al banco sobre anomalía
     //
     // 
     //
     DatosAlerta da;
-    da.cuenta_id = cuenta_id;
-    snprintf(da.mensaje, sizeof(da.mensaje), "%s", tipo_alerta);
+    da.cuenta_id = cuenta_id; //asocia la alerta a una cuenta concreta
+    //copia el texto de la alerta en la estructura
+    snprintf(da.mensaje, sizeof(da.mensaje), "%s", tipo_alerta); //controla tamaño del buffer
 
-    mq_send(g_mq_alerta, (const char *)&da, sizeof(da), 0);
+    //cola que conecta monitor con banco
+    mq_send(g_mq_alerta, (const char *)&da, sizeof(da), 0); //estructura a bytes para enviarla
     //
     //
     //
@@ -73,36 +76,39 @@ static int                 g_n_retiros = 0;
 static TrackTransferencias g_transf[MAX_TRAN_TRACK];
 static int                 g_n_transf = 0;
 
+//Analizar operación bancaria
 /*  Analizar mensaje  */
 static void analizar(const DatosMonitor *dm) {
 
     /*  Retiros consecutivos */
-    if (dm->tipo_op == OP_RETIRO) {
+    if (dm->tipo_op == OP_RETIRO) { 
     //
     // 
     //
-    int idx = -1;
+    int idx = -1; //indice (guarda posicion)
     for (int i = 0; i < g_n_retiros; i++) {
         if (g_retiros[i].cuenta_id == dm->cuenta_origen) {
-            idx = i;
+            idx = i; //si encuentra la cuenta se guarda su posicion en idx (sino -1)
             break;
         }
 }
 
-if (idx < 0 && g_n_retiros < MAX_CUENTAS_TRACK) {
-    idx = g_n_retiros++;
-    g_retiros[idx].cuenta_id = dm->cuenta_origen;
-    g_retiros[idx].retiros_consecutivos = 0;
-}
-
-if (idx >= 0) {
-    g_retiros[idx].retiros_consecutivos++;
-
-    if (g_retiros[idx].retiros_consecutivos >= g_umbral_retiros) {
-        enviar_alerta(dm->cuenta_origen, ALERTA_RETIROS);
-        g_retiros[idx].retiros_consecutivos = 0;
+    //si no existe crea registro
+    if (idx < 0 && g_n_retiros < MAX_CUENTAS_TRACK) {  //la cuenta no estaba y hay espacios
+        idx = g_n_retiros++;
+        g_retiros[idx].cuenta_id = dm->cuenta_origen; //cuenta al array
+        g_retiros[idx].retiros_consecutivos = 0; //inicializa contador
     }
-}
+
+    
+    if (idx >= 0) {
+        g_retiros[idx].retiros_consecutivos++; //se suma 1 cada vez que hay un retiro
+
+        if (g_retiros[idx].retiros_consecutivos >= g_umbral_retiros) { //si retiros>umbral alerta
+            enviar_alerta(dm->cuenta_origen, ALERTA_RETIROS);
+            g_retiros[idx].retiros_consecutivos = 0; //reseter contador
+        }
+    }
     //
     //
     //
@@ -152,25 +158,27 @@ int main(void) {
 
     /* poll() sobre el descriptor de MQ_MONITOR: bloqueo eficiente */
     struct pollfd pfd;
-    pfd.fd     = (int)g_mq_monitor;
-    pfd.events = POLLIN;
+    pfd.fd     = (int)g_mq_monitor; //vigilar: cola de mensaje donde llegan las operaciones
+    pfd.events = POLLIN; //saber cuando hay datos para leer
 
-    while (!g_salir) {
+    while (!g_salir) { //hasta que se le dice que pare
         //
         // 
         //
-    int ret = poll(&pfd, 1, 500);
-    if (ret > 0 && (pfd.revents & POLLIN)) {
-        DatosMonitor dm;
-        if (mq_receive(g_mq_monitor, (char *)&dm, sizeof(dm), NULL) > 0) {
-            analizar(&dm);
+        // (descriptor)
+        int ret = poll(&pfd, 1, 500); //esperar hasta un mensaje o tras 500ms
+        if (ret > 0 && (pfd.revents & POLLIN)) { //si hay datos para leer
+            //lee mensaje de la cola MQ_MONITOR
+            DatosMonitor dm;
+            if (mq_receive(g_mq_monitor, (char *)&dm, sizeof(dm), NULL) > 0) { 
+                analizar(&dm);
+            }
+    
+        //
+        //
+        //
         }
-}
-        //
-        //
-        //
     }
-
     mq_close(g_mq_monitor);
     mq_close(g_mq_alerta);
     return 0;

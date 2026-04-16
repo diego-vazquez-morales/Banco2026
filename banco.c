@@ -2,13 +2,14 @@
 #include <sys/stat.h>
 
 /* Variables globales */
-static mqd_t g_mq_log     = -1;
-static mqd_t g_mq_alerta  = -1;
-static mqd_t g_mq_monitor = -1;
+static mqd_t g_mq_log     = -1; //cola para recibir log desde hijos
+static mqd_t g_mq_alerta  = -1;//cola recibir alertas desde monitor
+static mqd_t g_mq_monitor = -1; //cola por la que se comunican datos hacia el monitor
 
 static pid_t g_monitor_pid = -1;
 
-#define MAX_HIJOS 64
+#define MAX_HIJOS 64 // Maximo numero de hijos
+//tabla procesos hijos
 typedef struct {
     pid_t pid;
     int   cuenta_id;
@@ -17,8 +18,8 @@ typedef struct {
 static InfoHijo g_hijos[MAX_HIJOS];
 static int      g_num_hijos = 0;
 
-static Config g_cfg;
-static volatile sig_atomic_t g_salir = 0;
+static Config g_cfg; // almacena la configuración del sistema
+static volatile sig_atomic_t g_salir = 0;  //volatile porque se modifica desde un manejador de señal
 
 /* Señales */
 static void manejador_sigterm(int s) { (void)s; g_salir = 1; }
@@ -32,20 +33,20 @@ static int leer_config(const char *ruta, Config *cfg) {
     //
     char linea[256];
 
-memset(cfg, 0, sizeof(Config));
+memset(cfg, 0, sizeof(Config)); //estructura a cero
 
-while (fgets(linea, sizeof(linea), f)) {
+while (fgets(linea, sizeof(linea), f)) { //comentarios y lineas vacias
         if (linea[0] == '#' || linea[0] == '\n') {
         continue;
     }
 
-    char clave[64], valor[256];
-    if (sscanf(linea, "%63[^=]=%255[^\n]", clave, valor) != 2) {
+    char clave[64], valor[256]; //divide la linea en clave y valor
+    if (sscanf(linea, "%63[^=]=%255[^\n]", clave, valor) != 2) { //ssacnf - leer/extraer datos de cadena texto
         continue;
     }
 
-    if (strcmp(clave, "PROXIMO_ID") == 0) {
-        cfg->proximo_id = atoi(valor);
+    if (strcmp(clave, "PROXIMO_ID") == 0) {// comparar cadenas
+        cfg->proximo_id = atoi(valor); //cfg - puntero a config
     } else if (strcmp(clave, "LIM_RET_EUR") == 0) {
         cfg->lim_ret_eur = (float)atof(valor);
     } else if (strcmp(clave, "LIM_RET_USD") == 0) {
@@ -126,36 +127,36 @@ static int crear_cuenta(Cuenta *nueva) {
     //
     if (sc == SEM_FAILED) { perror("sem_open config"); return -1; }
 
-sem_wait(sc);
+sem_wait(sc); //asegura la exclusión mutua
 
 nueva->numero_cuenta = g_cfg.proximo_id;
 g_cfg.proximo_id++;
 
-guardar_proximo_id(g_cfg.proximo_id);
+guardar_proximo_id(g_cfg.proximo_id); //guarda en config el nuevo valor de id
 
-sem_post(sc);
-sem_close(sc);
+sem_post(sc); //termina, lobera el semáforo
+sem_close(sc); // el proceso deja de usarlo
     //
     //
-    //
-    sem_t *sa = sem_open(SEM_CUENTAS, 0);
+    // 
+    sem_t *sa = sem_open(SEM_CUENTAS, 0); //abre semáforo cuentas
     //
     //
     //
     if (sa == SEM_FAILED) { perror("sem_open cuentas"); return -1; }
 
 
-sem_wait(sa);
+sem_wait(sa); //exlusión mutua
 
-FILE *f = fopen(g_cfg.archivo_cuentas, "ab");
-if (!f) {
+FILE *f = fopen(g_cfg.archivo_cuentas, "ab"); //escribir al final y binario
+if (!f) { //comprueba si el archivo no se ha podido abrir
     perror("fopen cuentas");
     sem_post(sa);
     sem_close(sa);
     return -1;
 }
 
-if (fwrite(nueva, sizeof(Cuenta), 1, f) != 1) {
+if (fwrite(nueva, sizeof(Cuenta), 1, f) != 1) { //se escribe nueva cuenta en el fichero
     perror("fwrite cuentas");
     fclose(f);
     sem_post(sa);
@@ -173,7 +174,7 @@ sem_close(sa);
 
 /* Escribir en el log */
 static void escribir_log(const char *linea) {
-    FILE *f = fopen(g_cfg.archivo_log, "a");
+    FILE *f = fopen(g_cfg.archivo_log, "a"); //abrir transacciones y añadir una linea
     //
     // Completar
     if (!f)
