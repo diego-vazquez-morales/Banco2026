@@ -97,6 +97,7 @@ typedef struct {
     char  archivo_log[MAX_PATH];
     float cambio_usd;
     float cambio_gbp;
+    int puerto;
 } Config;
 
 /* Utilidades  */

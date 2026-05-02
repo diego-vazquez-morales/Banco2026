@@ -1,6 +1,11 @@
 #include "banco_comun.h"
 #include <sys/stat.h>
 
+// Nuevos includes para la parte 2
+#include<netinet/in.h>
+#include<sys/socket.h>
+#include<arpa/inet.h>
+
 /* Variables globales */
 static mqd_t g_mq_log     = -1; //cola para recibir log desde hijos
 static mqd_t g_mq_alerta  = -1;//cola recibir alertas desde monitor
@@ -73,6 +78,8 @@ while (fgets(linea, sizeof(linea), f)) { //comentarios y lineas vacias
         cfg->cambio_usd = (float)atof(valor);
     } else if (strcmp(clave, "CAMBIO_GBP") == 0) {
         cfg->cambio_gbp = (float)atof(valor);
+    }else if (strcmp(clave, "PUERTO") == 0){
+        cfg->puerto = atoi(valor);
     }
 }
     //
@@ -322,6 +329,35 @@ static pid_t lanzar_usuario(int cuenta_id, int *pipe_wr_out) {
     return pid;
 }
 
+/* Lanzar usuario conectado por socket: dup2 del socket a stdin del hijo */
+static pid_t lanzar_usuario_socket(int cuenta_id, int socket_fd, int *pipe_wr_out) {
+    int pfd[2];
+    if (pipe(pfd) < 0) { perror("pipe"); return -1; }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork usuario_socket");
+        close(pfd[0]); close(pfd[1]);
+        return -1;
+    } else if (pid == 0) { // proceso hijo devuelve el pid = 0
+        close(pfd[1]);
+
+        dup2(socket_fd, STDIN_FILENO);
+        dup2(socket_fd, STDOUT_FILENO);  // ← añade esta línea
+        close(socket_fd);
+
+        char arg_cuenta[16];
+        char arg_pipe[16];
+        snprintf(arg_cuenta, sizeof(arg_cuenta), "%d", cuenta_id);
+        snprintf(arg_pipe, sizeof(arg_pipe), "%d", pfd[0]);
+
+        execv("./usuario", (char *[]){"./usuario", arg_cuenta, arg_pipe, NULL});
+        perror("execv usuario_socket");
+        exit(1);
+    }
+    return pid;
+}
+
 /* Lanzar proceso monitor */
 static void lanzar_monitor(void) {
     //
@@ -344,9 +380,8 @@ static void lanzar_monitor(void) {
         exit(1);
     }
 
-    // El padre no necesita hacer nada más, el monitor corre de forma independiente
-    // Su PID no se guarda porque se termina con SIGTERM al cerrar el sistema
-    //
+    /* Guardamos el PID del monitor para poder terminarlo luego */
+    g_monitor_pid = pid;
 }
 
 
@@ -392,88 +427,123 @@ int main(void) {
 
     lanzar_monitor();
 
+    // Creamos socket TCP 1 vez fuera del bucle
+    int server_fd;
+    struct sockaddr_in address;
+    int opt = 1;
+    socklen_t addrlen = sizeof(address);
+
+    if((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
+        perror("Socket failed");
+        return 1;
+    }
+    /* Reusar dirección/puerto */
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt SO_REUSEADDR");
+        close(server_fd);
+        return -1;
+    }
+
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt");
+        close(server_fd);
+        return 1;
+    }
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(g_cfg.puerto);
+
+    if(bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0){
+        perror("bind failed");
+        return 1;
+    }
+    if(listen(server_fd, 10) < 0){
+        perror("listen");
+        return 1;
+    }
+
+    fcntl(server_fd, F_SETFL, O_NONBLOCK);
+
     printf("\n+==============================+\n");
-    printf("|    SecureBank  --  Login     |\n");
-    printf("+==============================+\n");
+    printf("|    SecureBank  --  Online    |\n");
+    printf("|  Escuchando en puerto %-5d  |\n", g_cfg.puerto);
+    printf("+==============================+\n\n");
 
-    /* poll sobre stdin, MQ_LOG y MQ_ALERTA directamente */
-    struct pollfd pfds[3];
-    pfds[0].fd = STDIN_FILENO; pfds[0].events = POLLIN;
-    pfds[1].fd = g_mq_log;     pfds[1].events = POLLIN;
-    pfds[2].fd = g_mq_alerta;  pfds[2].events = POLLIN;
+    // Bucle principal del servidor: solo vigilamos el server_fd con poll.
+    struct pollfd pfds[1];
+    pfds[0].fd = server_fd;
+    pfds[0].events = POLLIN;
 
-    while (!g_salir) {
-
-        printf("\nIntroduzca numero de cuenta (0=nueva, -1=salir): ");
-        fflush(stdout);
-
-        int ret = poll(pfds, 3, -1);
-        if (ret < 0) { if (errno==EINTR) continue; break; }
-
-        if (pfds[1].revents & POLLIN) procesar_log();
-        if (pfds[2].revents & POLLIN) procesar_alertas();
-        if (!(pfds[0].revents & POLLIN)) continue;
-
-        int numero;
-        if (scanf("%d", &numero) != 1) {
-            int c; while ((c=getchar())!='\n'&&c!=EOF);
-            continue;
+    while(!g_salir){
+        int ret = poll(pfds, 1, 200);
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            perror("poll");
+            break;
         }
-        if (numero == -1) { g_salir = 1; break; }
 
-        Cuenta cuenta;
-        memset(&cuenta, 0, sizeof(cuenta));
-
-        if (numero == 0) {
-            printf("Nombre del titular: "); fflush(stdout);
-            if (scanf(" %49[^\n]", cuenta.titular) != 1)
-                strcpy(cuenta.titular, "Desconocido");
-            cuenta.saldo_eur = cuenta.saldo_usd = cuenta.saldo_gbp = 0.0f;
-            int id = crear_cuenta(&cuenta);
-            if (id < 0) { fprintf(stderr, "Error al crear cuenta.\n"); continue; }
-            numero = id;
-        } else {
-            if (!buscar_cuenta(numero, &cuenta)) {
-                printf("Cuenta %d no encontrada.\n", numero);
+        if (ret > 0 && (pfds[0].revents & POLLIN)) {
+            int new_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen);
+            if (new_socket < 0) {
                 continue;
             }
-            printf("Bienvenido, %s (cuenta %d)\n", cuenta.titular, numero);
+            
+            // Menú de bienvenida
+            char *menu =
+                "+==============================+\r\n"
+                "|       S E C U R E B A N K   |\r\n"
+                "+==============================+\r\n"
+                "|  Bienvenido al sistema       |\r\n"
+                "|  bancario SecureBank         |\r\n"
+                "+==============================+\r\n"
+                "  Numero de cuenta : ";
+            write(new_socket, menu, strlen(menu));
+
+            // leer número de cuenta del cliente
+            char buf[64] = {0};
+            read(new_socket, buf, sizeof(buf) - 1);
+            int numero = atoi(buf);
+
+            Cuenta cuenta;
+            memset(&cuenta, 0, sizeof(cuenta));
+
+            if (!buscar_cuenta(numero, &cuenta)) {
+                write(new_socket, "Cuenta no encontrada\n", 21);
+                close(new_socket);
+                continue;
+            }
+
+            int pipe_wr;
+            pid_t pid = lanzar_usuario_socket(numero, new_socket, &pipe_wr);
+            close(new_socket); // El padre cierra su copia
+
+            if (pid > 0 && g_num_hijos < MAX_HIJOS) {
+                g_hijos[g_num_hijos].pid = pid;
+                g_hijos[g_num_hijos].cuenta_id = numero;
+                g_hijos[g_num_hijos].pipe_wr = pipe_wr;
+                g_num_hijos++;
+            }
         }
 
-        int pipe_wr;
-        pid_t pid = lanzar_usuario(numero, &pipe_wr);
-        if (pid < 0) continue;
+        // Procesar colas (non-blocking)
+        procesar_log();
+        procesar_alertas();
 
-        g_hijos[g_num_hijos].pid       = pid;
-        g_hijos[g_num_hijos].cuenta_id = numero;
-        g_hijos[g_num_hijos].pipe_wr   = pipe_wr;
-        g_num_hijos++;
-
-        /* Fase sesión: poll sobre las colas y waitpid mientras el hijo vive */
-        struct pollfd pfd_ses[2];
-        pfd_ses[0].fd = g_mq_log;    pfd_ses[0].events = POLLIN;
-        pfd_ses[1].fd = g_mq_alerta; pfd_ses[1].events = POLLIN;
-
-        while (!g_salir) {
-            poll(pfd_ses, 2, 200);
-
-            if (pfd_ses[0].revents & POLLIN) procesar_log();
-            if (pfd_ses[1].revents & POLLIN) procesar_alertas();
-
-            int wst;
-            if (waitpid(pid, &wst, WNOHANG) == pid) {
-                if (pipe_wr != -1) { close(pipe_wr); pipe_wr = -1; }
-                for (int i = 0; i < g_num_hijos; i++) {
-                    if (g_hijos[i].pid == pid) {
-                        g_hijos[i] = g_hijos[--g_num_hijos];
-                        break;
-                    }
+        // Recogemos los hijos que van terminando
+        int wst;
+        pid_t p;
+        while ((p = waitpid(-1, &wst, WNOHANG)) > 0) {
+            for (int i = 0; i < g_num_hijos; i++) {
+                if (g_hijos[i].pid == p) {
+                    if (g_hijos[i].pipe_wr != -1) close(g_hijos[i].pipe_wr);
+                    g_hijos[i] = g_hijos[--g_num_hijos];
+                    break;
                 }
-                break;
             }
         }
     }
 
+    //---------------------------------------
     /* Cierre */
     g_salir = 1;
 
@@ -481,6 +551,7 @@ int main(void) {
         if (g_hijos[i].pipe_wr != -1) close(g_hijos[i].pipe_wr);
         waitpid(g_hijos[i].pid, NULL, 0);
     }
+    if (server_fd >= 0) close(server_fd);
     if (g_monitor_pid > 0) {
         kill(g_monitor_pid, SIGTERM);
         waitpid(g_monitor_pid, NULL, 0);

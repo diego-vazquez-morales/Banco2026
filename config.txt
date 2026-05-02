@@ -1,4 +1,4 @@
-PROXIMO_ID=1016
+PROXIMO_ID=1019
 LIM_RET_EUR=1000
 LIM_RET_USD=2000
 LIM_RET_GBP=3000
@@ -15,4 +15,6 @@ ARCHIVO_LOG=transacciones.log
 # Tipo de cambio (base EUR)
 CAMBIO_USD=1.08
 CAMBIO_GBP=0.86
+#Puerto de acceso
+PUERTO=8080
 

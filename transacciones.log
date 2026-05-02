@@ -1,1 +1,17 @@
 
+[2026-04-16 11:01:24] Deposito en cuenta 1016: +400.00 EUR (PID: 5899, Estado: OK)
+[2026-04-16 11:01:38] Transferencia en cuenta 1016: -40.00 EUR (PID: 5899, Estado: OK)
+[2026-04-16 11:01:53] Transferencia en cuenta 1016: -5.00 EUR (PID: 5899, Estado: OK)
+[2026-04-16 11:01:53] ALERTA: TRANSFERENCIAS_REPETITIVAS - cuenta BLOQUEADA
+[2026-04-16 11:07:59] Deposito en cuenta 1017: +500.00 EUR (PID: 7007, Estado: OK)
+[2026-04-16 11:08:19] Retiro en cuenta 1017: -50.00 EUR (PID: 7007, Estado: OK)
+[2026-04-16 11:08:27] Retiro en cuenta 1017: --50.00 EUR (PID: 7007, Estado: OK)
+[2026-04-16 11:08:46] Retiro en cuenta 1017: -20.00 EUR (PID: 7007, Estado: OK)
+[2026-04-16 11:08:46] ALERTA: RETIROS_EXCESIVOS - cuenta BLOQUEADA
+[2026-04-16 11:09:56] Transferencia en cuenta 1018: -5.00 EUR (PID: 7287, Estado: FALLIDO)
+[2026-04-16 11:10:09] Transferencia en cuenta 1018: -5.00 EUR (PID: 7287, Estado: FALLIDO)
+[2026-04-16 11:10:25] Transferencia en cuenta 1018: -5.00 EUR (PID: 7287, Estado: FALLIDO)
+[2026-04-16 11:10:31] Deposito en cuenta 1018: +40.00 EUR (PID: 7287, Estado: OK)
+[2026-04-16 11:10:40] Transferencia en cuenta 1018: -10.00 EUR (PID: 7287, Estado: OK)
+[2026-04-16 11:10:49] Transferencia en cuenta 1018: -10.00 EUR (PID: 7287, Estado: OK)
+[2026-04-16 11:10:49] ALERTA: TRANSFERENCIAS_REPETITIVAS - cuenta BLOQUEADA
