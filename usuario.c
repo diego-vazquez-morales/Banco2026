@@ -183,6 +183,16 @@ static void *thread_deposito(void *arg) {
         // terminamos el thread
         return NULL;
     }
+
+    // Validar que la cantidad sea positiva
+    if (d->cantidad <= 0) {
+        printf("Error: la cantidad a depositar debe ser positiva.\n");
+        enviar_log(OP_DEPOSITO, d->cantidad, d->divisa_origen, 0);
+        sem_post(sem);
+        sem_close(sem);
+        free(d);
+        return NULL;
+    }
     
     // Sumamos la cantidad que el usuario quiere ingresar al saldo de la divisa elegida
     if(d->divisa_origen == DIV_EUR){
@@ -249,6 +259,16 @@ static void *thread_retiro(void *arg) {
     // obtenemos el saldo actual y el limite de retiro
     float saldo_actual;
     float limite;
+
+    // Validar que la cantidad sea positiva (no se permiten retiros negativos ni cero)
+    if (d->cantidad <= 0) {
+        printf("Error: la cantidad a retirar debe ser positiva.\n");
+        enviar_log(OP_RETIRO, d->cantidad, d->divisa_origen, 0);
+        sem_post(sem);
+        sem_close(sem);
+        free(d);
+        return NULL;
+    }   
 
     if(d->divisa_origen == DIV_EUR){
         saldo_actual = c.saldo_eur;
@@ -346,6 +366,17 @@ static void *thread_transferencia(void *arg) {
 
     // Leemos la cuenta ORIGEN del fichero binario
     Cuenta origen;
+    
+    // Evitar transferencia a la misma cuenta
+    if (d->cuenta_id == d->cuenta_destino) {
+        printf("Error: no se puede transferir a la misma cuenta origen.\n");
+        enviar_log(OP_TRANSFERENCIA, d->cantidad, d->divisa_origen, 0);
+        sem_post(sem);
+        sem_close(sem);
+        free(d);
+        return NULL;
+    }
+
     if (leer_cuenta(d->cuenta_id, &origen) != 0) {
         sem_post(sem);
         sem_close(sem);
@@ -379,6 +410,16 @@ static void *thread_transferencia(void *arg) {
         limite       = g_cfg.lim_trf_gbp;
     } else {
         // Divisa no reconocida, abortamos
+        sem_post(sem);
+        sem_close(sem);
+        free(d);
+        return NULL;
+    }
+
+    // Validar que la cantidad sea positiva
+    if (d->cantidad <= 0) {
+        printf("Error: la cantidad de transferencia debe ser positiva.\n");
+        enviar_log(OP_TRANSFERENCIA, d->cantidad, d->divisa_origen, 0);
         sem_post(sem);
         sem_close(sem);
         free(d);
@@ -476,6 +517,15 @@ static void *thread_mover_divisa(void *arg) {
     else if (d->divisa_origen == DIV_USD) saldo_actual = c.saldo_usd;
     else if (d->divisa_origen == DIV_GBP) saldo_actual = c.saldo_gbp;
     else {
+        sem_post(sem);
+        sem_close(sem);
+        free(d);
+        return NULL;
+    }
+
+    // Validar que la cantidad sea positiva
+    if (d->cantidad <= 0) {
+        printf("Error: la cantidad a convertir debe ser positiva.\n");
         sem_post(sem);
         sem_close(sem);
         free(d);
