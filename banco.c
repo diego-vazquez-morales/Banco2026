@@ -20,6 +20,11 @@ typedef struct {
     int   cuenta_id;
     int   pipe_wr;
 } InfoHijo;
+typedef struct {
+    pid_t pid_usuario;
+    int   cuenta_id;
+    int   pipe_wr;
+} RegistroHijo;
 static InfoHijo g_hijos[MAX_HIJOS];
 static int      g_num_hijos = 0;
 
@@ -279,55 +284,7 @@ static void procesar_alertas(void) {
     }
 }
 
-/* Lanzar proceso usuario */
-static pid_t lanzar_usuario(int cuenta_id, int *pipe_wr_out) {
-    int pfd[2];
-    if (pipe(pfd) < 0) { perror("pipe"); return -1; }
 
-    pid_t pid = fork();
-    //
-    // Completar
-        if (pid < 0)
-    {
-        // fork() ha fallado, mostramos el error y cerramos ambos extremos del pipe
-        perror("fork usuario");
-        close(pfd[0]);
-        close(pfd[1]);
-        return -1;
-    }
-    else if (pid == 0)
-    {
-        // Estamos en el proceso HIJO
-
-        // Cerramos el extremo de escritura del pipe, el hijo solo lee
-        close(pfd[1]);
-
-        // Convertimos cuenta_id y el descriptor de lectura a cadenas para pasarlos como argumentos
-        char arg_cuenta[16];
-        char arg_pipe[16];
-        snprintf(arg_cuenta, sizeof(arg_cuenta), "%d", cuenta_id);
-        snprintf(arg_pipe, sizeof(arg_pipe), "%d", pfd[0]);
-
-        // Reemplazamos la imagen del proceso hijo por el ejecutable usuario
-        execv("./usuario", (char *[]){"./usuario", arg_cuenta, arg_pipe, NULL});
-
-        // Si execv retorna es que ha fallado, mostramos el error y terminamos el hijo
-        perror("execv usuario");
-        exit(1);
-    }
-    else
-    {
-        // Estamos en el proceso PADRE
-
-        // Cerramos el extremo de lectura del pipe, el padre solo escribe
-        close(pfd[0]);
-
-        // Devolvemos al llamador el descriptor de escritura para enviar alertas al hijo
-        *pipe_wr_out = pfd[1];
-    }
-    //
-    return pid;
-}
 
 /* Lanzar usuario conectado por socket: redirige stdin/stdout del hijo al socket */
 static pid_t lanzar_usuario_socket(int cuenta_id, int socket_fd, int *pipe_wr_out) {
@@ -388,6 +345,92 @@ static void lanzar_monitor(void) {
     g_monitor_pid = pid;
 }
 
+int crear_cuenta_con_id(int id, Cuenta *c) {
+    c->numero_cuenta = id;
+
+    FILE *f = fopen(g_cfg.archivo_cuentas, "r+b"); // abrir sin truncar
+    if (!f) f = fopen(g_cfg.archivo_cuentas, "wb"); // si no existe, crear
+    if (!f) return -1;
+
+    // saltar a la posición del id pedido
+    fseek(f, (id - 1) * sizeof(Cuenta), SEEK_SET);
+    
+    int ok = fwrite(c, sizeof(Cuenta), 1, f) == 1;
+    fclose(f);
+    return ok ? id : -1;
+}
+
+static void atender_cliente_socket(int new_socket, int reg_fd) {
+    char *menu =
+        "+==============================+\r\n"
+        "|       S E C U R E B A N K   |\r\n"
+        "+==============================+\r\n"
+        "|  Bienvenido al sistema       |\r\n"
+        "|  bancario SecureBank         |\r\n"
+        "+==============================+\r\n"
+        "  Numero de cuenta : ";
+
+    write(new_socket, menu, strlen(menu));
+
+    char buf[64] = {0};
+    ssize_t nread = read(new_socket, buf, sizeof(buf) - 1);
+    if (nread <= 0) {
+        close(new_socket);
+        return;
+    }
+    buf[strcspn(buf, "\r\n")] = '\0';
+    int numero = atoi(buf);
+    if (numero <= 0) {
+        write(new_socket, "Numero de cuenta invalido\r\n", 27);
+        close(new_socket);
+        return;
+    }
+
+    Cuenta cuenta;
+    memset(&cuenta, 0, sizeof(cuenta));
+
+    if (!buscar_cuenta(numero, &cuenta)) {
+        char msg[] = "Cuenta no encontrada. Nombre del titular: ";
+        write(new_socket, msg, strlen(msg));
+
+        char nombre[64] = {0};
+        ssize_t n = read(new_socket, nombre, sizeof(nombre) - 1);
+        if (n <= 0) {
+            close(new_socket);
+            return;
+        }
+        nombre[strcspn(nombre, "\r\n")] = '\0';
+
+        strncpy(cuenta.titular, nombre, sizeof(cuenta.titular) - 1);
+        cuenta.saldo_eur = 0.0f;
+        cuenta.saldo_usd = 0.0f;
+        cuenta.saldo_gbp = 0.0f;
+
+        if (crear_cuenta_con_id(numero, &cuenta) < 0) {
+            write(new_socket, "Error al crear cuenta\r\n", 23);
+            close(new_socket);
+            return;
+        }
+
+        char bienvenida[128];
+        snprintf(bienvenida, sizeof(bienvenida), "Cuenta %d creada. Bienvenido, %s\r\n", numero, cuenta.titular);
+        write(new_socket, bienvenida, strlen(bienvenida));
+    }
+
+    int pipe_wr = -1;
+    pid_t pid = lanzar_usuario_socket(numero, new_socket, &pipe_wr);
+    close(new_socket);
+
+    if (pid > 0) {
+        RegistroHijo reg;
+        reg.pid_usuario = pid;
+        reg.cuenta_id = numero;
+        reg.pipe_wr = pipe_wr;
+        write(reg_fd, &reg, sizeof(reg));
+    }
+
+    close(reg_fd);
+}
 
 int main(void) {
     signal(SIGTERM, manejador_sigterm);
@@ -403,6 +446,13 @@ int main(void) {
     sem_t *sem_g = sem_open(SEM_CONFIG,  O_CREAT|O_EXCL, 0600, 1);
     if (sem_c==SEM_FAILED || sem_g==SEM_FAILED) { perror("sem_open inicial"); return 1; }
     sem_close(sem_c); sem_close(sem_g);
+
+    int reg_pipe[2];
+    if (pipe(reg_pipe) < 0) {
+        perror("pipe registro");
+        return 1;
+    }
+    fcntl(reg_pipe[0], F_SETFL, O_NONBLOCK);
 
     int fd = open(g_cfg.archivo_cuentas, O_CREAT|O_RDWR, 0644);
     if (fd >= 0) close(fd);
@@ -434,26 +484,26 @@ int main(void) {
     // Creamos socket TCP 1 vez fuera del bucle
     int server_fd;
     struct sockaddr_in address;
-    int opt = 1;
+    int opt = 1;  // el valor que le pasas al socket 1 significa activado
     socklen_t addrlen = sizeof(address);
 
-    if((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
+    if((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0){  // Creas el socket en memoria
         perror("Socket failed");
         return 1;
     }
     
     // Permitir reusar dirección y puerto si el servidor se reinicia
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {  // Configurar opciojnes antes de crearlo
         perror("setsockopt SO_REUSEADDR");
         close(server_fd);
         return -1;
     }
 
-    address.sin_family = AF_INET;
+    address.sin_family = AF_INET;   //IpV4 
     address.sin_addr.s_addr = INADDR_ANY;   // Aceptar conexiones en cualquier interfaz
     address.sin_port = htons(g_cfg.puerto); // Puerto leído del config.txt
 
-    // Asociar el socket a la dirección y puerto configurados
+    // Asociar el socket a la IP y al puerto configurados
     if(bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0){
         perror("bind failed");
         return 1;
@@ -466,6 +516,7 @@ int main(void) {
     }
 
     // Poner el socket en modo no bloqueante para poder usar poll()
+    // Sin esto, accept() se bloquearía indefinidamente esperando una conexión,
     fcntl(server_fd, F_SETFL, O_NONBLOCK);
 
     printf("\n+==============================+\n");
@@ -474,12 +525,15 @@ int main(void) {
     printf("+==============================+\n\n");
 
     // Bucle principal del servidor: solo vigilamos el server_fd con poll.
-    struct pollfd pfds[1];
-    pfds[0].fd = server_fd;
-    pfds[0].events = POLLIN;  // Nos interesa saber cuándo hay una conexión entrante
+    // pollfd es una estructura que le dice a poll() qué descriptor vigilar y qué evento esperar.
+    struct pollfd pfds[2];
+    pfds[0].fd = server_fd;     // El descriptor que queremos vigilar
+    pfds[0].events = POLLIN;  // POLLIN = avisar cuando haya datos/conexión lista para leer
+    pfds[1].fd = reg_pipe[0];
+    pfds[1].events = POLLIN;
 
     while(!g_salir){
-        int ret = poll(pfds, 1, 200);   // Esperar hasta 200ms; así podemos procesar colas y señales
+        int ret = poll(pfds, 2, 200);   // Esperar hasta 200ms; así podemos procesar colas y señales
         if (ret < 0) {
             if (errno == EINTR) continue;   // Interrupción por señal, reintentar
             perror("poll");
@@ -491,55 +545,34 @@ int main(void) {
             if (new_socket < 0) {
                 continue; // accept puede fallar si la conexión se cerró antes
             }
-            
-            // Menú de bienvenida
-            char *menu =
-                "+==============================+\r\n"
-                "|       S E C U R E B A N K   |\r\n"
-                "+==============================+\r\n"
-                "|  Bienvenido al sistema       |\r\n"
-                "|  bancario SecureBank         |\r\n"
-                "+==============================+\r\n"
-                "  Numero de cuenta : ";
 
-            // Enviar menú de bienvenida al cliente para que se le muestre en su terminal
-            write(new_socket, menu, strlen(menu));
-
-            // leer número de cuenta del cliente
-            char buf[64] = {0};
-            ssize_t nread = read(new_socket, buf, sizeof(buf) - 1);
-            if (nread <= 0) { // Cliente cerró sin enviar nada
+            pid_t pid_cliente = fork();
+            if (pid_cliente < 0) {
+                perror("fork cliente");
                 close(new_socket);
                 continue;
             }
-            buf[strcspn(buf, "\r\n")] = '\0'; // Eliminar \r\n que envía telnet
-            int numero = atoi(buf);
-            if (numero <= 0) { // Número no válido
-                write(new_socket, "Numero de cuenta invalido\r\n", 27);
-                close(new_socket);
-                continue;
+            if (pid_cliente == 0) {
+                close(server_fd);
+                close(reg_pipe[0]);
+                atender_cliente_socket(new_socket, reg_pipe[1]);
+                exit(0);
             }
 
-            Cuenta cuenta;
-            memset(&cuenta, 0, sizeof(cuenta));
+            close(new_socket);
+        }
 
-            if (!buscar_cuenta(numero, &cuenta)) { // La cuenta no existe en cuentas.dat
-                write(new_socket, "Cuenta no encontrada\r\n", 22);
-                close(new_socket);
-                continue;
-            }
-
-            // Lanzar proceso hijo que atenderá esta conexión
-            int pipe_wr;
-            pid_t pid = lanzar_usuario_socket(numero, new_socket, &pipe_wr);
-            close(new_socket); // El padre cierra su copia del socket, el hijo ya la tiene
-
-            // Registrar el hijo en la tabla para poder enviarle bloqueos y recogerlo al terminar
-            if (pid > 0 && g_num_hijos < MAX_HIJOS) {
-                g_hijos[g_num_hijos].pid = pid;
-                g_hijos[g_num_hijos].cuenta_id = numero;
-                g_hijos[g_num_hijos].pipe_wr = pipe_wr;
-                g_num_hijos++;
+        if (ret > 0 && (pfds[1].revents & POLLIN)) {
+            RegistroHijo reg;
+            while (read(reg_pipe[0], &reg, sizeof(reg)) == sizeof(reg)) {
+                if (g_num_hijos < MAX_HIJOS) {
+                    g_hijos[g_num_hijos].pid = reg.pid_usuario;
+                    g_hijos[g_num_hijos].cuenta_id = reg.cuenta_id;
+                    g_hijos[g_num_hijos].pipe_wr = reg.pipe_wr;
+                    g_num_hijos++;
+                } else if (reg.pipe_wr != -1) {
+                    close(reg.pipe_wr);
+                }
             }
         }
 
@@ -570,6 +603,8 @@ int main(void) {
         waitpid(g_hijos[i].pid, NULL, 0);
     }
     if (server_fd >= 0) close(server_fd);
+    close(reg_pipe[0]);
+    close(reg_pipe[1]);
     if (g_monitor_pid > 0) {
         kill(g_monitor_pid, SIGTERM);
         waitpid(g_monitor_pid, NULL, 0);
