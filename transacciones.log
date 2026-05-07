@@ -48,3 +48,6 @@
 [2026-05-07 10:41:09] Retiro en cuenta 1006: -2345.00 EUR (PID: 16270, Estado: FALLIDO)
 [2026-05-07 10:41:18] Retiro en cuenta 1006: -234.00 EUR (PID: 16270, Estado: OK)
 [2026-05-07 10:41:18] ALERTA: RETIROS_EXCESIVOS - cuenta BLOQUEADA
+[2026-05-07 10:43:56] Deposito en cuenta 1002: +80.00 EUR (PID: 17129, Estado: OK)
+[2026-05-07 10:44:04] Deposito en cuenta 1005: +200.00 EUR (PID: 17138, Estado: OK)
+[2026-05-07 10:44:11] Retiro en cuenta 1005: -50.00 EUR (PID: 17138, Estado: OK)
