@@ -13,29 +13,24 @@ static void manejador_sigterm(int s) { (void)s; g_salir = 1; }
 
 /* Leer config */
 static void leer_config_monitor(void) {
-   //
-   //
-   //
     FILE *f = fopen("config.txt", "r");
     if (!f) return;
 
-    //Preparar el buffer
     char linea[256];
 
     while (fgets(linea, sizeof(linea), f)) {
-        char clave[64], valor[64];
-        if (sscanf(linea, "%63[^=]=%63s", clave, valor) != 2) continue; //lee hasta encintrar un =
+        if (linea[0] == '#' || linea[0] == '\n') continue;
 
-        if (strcmp(clave, "UMBRAL_RETIROS") == 0) // compara clave == umbral_retiros(iguales)
+        char clave[64], valor[64];
+        if (sscanf(linea, " %63[^=]=%63s", clave, valor) != 2) continue;
+
+        if (strcmp(clave, "UMBRAL_RETIROS") == 0)
             g_umbral_retiros = atoi(valor);
         else if (strcmp(clave, "UMBRAL_TRANSFERENCIAS") == 0)
             g_umbral_transferencias = atoi(valor);
     }
 
     fclose(f);
-    //
-    //
-    //
 }
 
 /*  Enviar alerta al padre  */
@@ -61,13 +56,11 @@ static void enviar_alerta(int cuenta_id, const char *tipo_alerta) { //alerta al 
 
 typedef struct {
     int   cuenta_id;
-    int   retiros_consecutivos;
-    float ultimo_retiro;
+    int   retiros_totales;
 } TrackRetiros;
 
 typedef struct {
     int cuenta_origen;
-    int cuenta_destino;
     int contador;
 } TrackTransferencias;
 
@@ -80,55 +73,40 @@ static int                 g_n_transf = 0;
 /*  Analizar mensaje  */
 static void analizar(const DatosMonitor *dm) {
 
-    /*  Retiros consecutivos */
-    if (dm->tipo_op == OP_RETIRO) { 
-    //
-    // 
-    //
-    int idx = -1; //indice (guarda posicion)
+    /*  Retiros totales por cuenta */
+    if (dm->tipo_op == OP_RETIRO) {
+    int idx = -1;
     for (int i = 0; i < g_n_retiros; i++) {
         if (g_retiros[i].cuenta_id == dm->cuenta_origen) {
-            idx = i; //si encuentra la cuenta se guarda su posicion en idx (sino -1)
+            idx = i;
             break;
         }
-}
-
-    //si no existe crea registro
-    if (idx < 0 && g_n_retiros < MAX_CUENTAS_TRACK) {  //la cuenta no estaba y hay espacios
-        idx = g_n_retiros++;
-        g_retiros[idx].cuenta_id = dm->cuenta_origen; //cuenta al array
-        g_retiros[idx].retiros_consecutivos = 0; //inicializa contador
     }
 
-    
-    if (idx >= 0) {
-        g_retiros[idx].retiros_consecutivos++; //se suma 1 cada vez que hay un retiro
+    if (idx < 0 && g_n_retiros < MAX_CUENTAS_TRACK) {
+        idx = g_n_retiros++;
+        g_retiros[idx].cuenta_id = dm->cuenta_origen;
+        g_retiros[idx].retiros_totales = 0;
+    }
 
-        if (g_retiros[idx].retiros_consecutivos >= g_umbral_retiros) { //si retiros>umbral alerta
+    if (idx >= 0) {
+        g_retiros[idx].retiros_totales++;
+
+        if (g_retiros[idx].retiros_totales >= g_umbral_retiros) {
             enviar_alerta(dm->cuenta_origen, ALERTA_RETIROS);
-            g_retiros[idx].retiros_consecutivos = 0; //reseter contador
+            g_retiros[idx].retiros_totales = 0;
         }
     }
-    //
-    //
-    //
-    } else {
-        for (int i = 0; i < g_n_retiros; i++)
-            if (g_retiros[i].cuenta_id == dm->cuenta_origen) {
-                g_retiros[i].retiros_consecutivos = 0; break;
-            }
     }
 
     /*  Transferencias repetitivas */
     if (dm->tipo_op == OP_TRANSFERENCIA) {
         int idx = -1;
         for (int i = 0; i < g_n_transf; i++)
-            if (g_transf[i].cuenta_origen  == dm->cuenta_origen &&
-                g_transf[i].cuenta_destino == dm->cuenta_destino) { idx = i; break; }
+            if (g_transf[i].cuenta_origen == dm->cuenta_origen) { idx = i; break; }
         if (idx < 0 && g_n_transf < MAX_TRAN_TRACK) {
             idx = g_n_transf++;
             g_transf[idx].cuenta_origen  = dm->cuenta_origen;
-            g_transf[idx].cuenta_destino = dm->cuenta_destino;
             g_transf[idx].contador       = 0;
         }
         if (idx >= 0) {
